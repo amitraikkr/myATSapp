@@ -1,0 +1,155 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: >
+  ATSappBackend
+
+  Sample SAM Template for ATSappBackend
+
+Globals:
+  Function:
+    Timeout: 120
+    MemorySize: 128
+
+Resources:
+  ResumeBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub atsapp-resume-bucket-${AWS::AccountId}-${AWS::Region}
+      VersioningConfiguration:
+        Status: Enabled
+      AccessControl: Private
+
+  AtsAppBackEndFunctionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: 'sts:AssumeRole'
+      Policies:
+        - PolicyName: LambdaS3Access
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - s3:GetObject
+                  - s3:PutObject
+                  - s3:DeleteObject
+                  - s3:ListBucket
+                Resource:
+                  - !GetAtt ResumeBucket.Arn
+                  - !Sub ${ResumeBucket.Arn}/*
+        - PolicyName: SecretsManagerReadAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: secretsmanager:GetSecretValue
+                Resource: # please add your secret manager resource here
+        - PolicyName: DynamoDBCrudAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - dynamodb:PutItem
+                  - dynamodb:GetItem
+                  - dynamodb:UpdateItem
+                  - dynamodb:DeleteItem
+                  - dynamodb:Query
+                  - dynamodb:Scan
+                Resource: !GetAtt AtsContextTable.Arn
+        - PolicyName: LambdaExecution
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: 'arn:aws:logs:*:*:*'
+
+  AtsAppBackEndFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: AtsApp_BackEnd
+      CodeUri: ATSappBackEnd/
+      Handler: app.lambda_handler
+      Role: !GetAtt AtsAppBackEndFunctionRole.Arn
+      Runtime: python3.11
+      Architectures:
+        - x86_64
+      Layers:
+        - !Ref AtsAppLibLayer
+      Environment:
+        Variables:
+          S3_BUCKET: !Ref ResumeBucket
+          ATS_TAB_NAME: !Ref AtsContextTable
+          REGION_NAME: !Sub ${AWS::Region}
+          
+  SecretsManagerReadPolicy:
+    Type: AWS::IAM::ManagedPolicy
+    Properties:
+      Description: Allows lambda function to read secrets from Secrets Manager
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Action: secretsmanager:GetSecretValue
+            Resource: # please add your secret manager resource here
+
+  DynamoDBCrudPolicy:
+    Type: AWS::IAM::ManagedPolicy
+    Properties:
+      Description: Allows lambda function to perform CRUD operations on DynamoDB
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Action:
+              - dynamodb:PutItem
+              - dynamodb:GetItem
+              - dynamodb:UpdateItem
+              - dynamodb:DeleteItem
+              - dynamodb:Query
+              - dynamodb:Scan
+            Resource: !GetAtt AtsContextTable.Arn            
+
+  AtsAppLibLayer:
+    Type: AWS::Serverless::LayerVersion
+    Properties: 
+      LayerName: "atsapp-lib-layer"
+      Description: "Layer for chatbot libraries"
+      ContentUri: lib_layer/python/site-packages/
+      CompatibleRuntimes: 
+        - python3.11
+      RetentionPolicy: Retain
+
+  AtsContextTable:
+    Type: "AWS::DynamoDB::Table"
+    Properties:
+      TableName: !Sub atsapp-context-table-${AWS::Region}
+      AttributeDefinitions:
+        - AttributeName: "user_id"
+          AttributeType: "S"
+      KeySchema:
+        - AttributeName: "user_id"
+          KeyType: "HASH"
+      BillingMode: PAY_PER_REQUEST  # Set to On-Demand capacity.
+    
+
+Outputs:
+  AtsAppBackEndFunction:
+    Description: "ATS App Backend Lambda Function ARN"
+    Value: !GetAtt AtsAppBackEndFunction.Arn
+  AtsAppBackEndFunctionIamRole:
+    Description: "IAM Role for ATS App Backend function"
+    Value: !GetAtt AtsAppBackEndFunctionRole.Arn
+  ResumeBucketName:
+    Description: "S3 Bucket for resume uploads"
+    Value: !Ref ResumeBucket
